@@ -3,6 +3,10 @@
 /docs/_build/
 /testbin/
 
+# test 
+kind
+
+
 # Binaries for programs and plugins
 *.exe
 *.exe~
