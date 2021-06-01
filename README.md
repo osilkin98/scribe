@@ -33,7 +33,7 @@ To try out Scribe with a command line interface `scribe`:
 
 ```bash
 make cli
-cp bin/kubectl-scribe /usr/local/bin/
+cp bin/kubectl-scribe /usr/local/bin/ 
 ```
 
 **NOTE:** `scribe` tool is being actively developed. Options, flags,
