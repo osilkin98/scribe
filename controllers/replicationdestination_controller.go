@@ -88,6 +88,7 @@ type ReplicationDestinationReconciler struct {
 //nolint:funlen
 func (r *ReplicationDestinationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := r.Log.WithValues("replicationdestination", req.NamespacedName)
+	logger.Info("Reconcile invoked")
 	// Get CR instance
 	inst := &scribev1alpha1.ReplicationDestination{}
 	if err := r.Client.Get(ctx, req.NamespacedName, inst); err != nil {
@@ -111,6 +112,7 @@ func (r *ReplicationDestinationReconciler) Reconcile(ctx context.Context, req ct
 		return result, err
 	}
 	if inst.Spec.Rsync != nil {
+		logger.Info("Rsync reconciler invoked")
 		result, err = RunRsyncDestReconciler(ctx, inst, r, logger)
 	} else if inst.Spec.Rclone != nil {
 		result, err = RunRcloneDestReconciler(ctx, inst, r, logger)

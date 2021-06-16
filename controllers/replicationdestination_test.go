@@ -178,8 +178,10 @@ var _ = Describe("ReplicationDestination", func() {
 	})
 
 	Context("when a destinationPVC is specified", func() {
+		// declare the pvc
 		var pvc *v1.PersistentVolumeClaim
 		BeforeEach(func() {
+			// setup the PVC - this is equivalent to the yaml deployments
 			pvc = &v1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
@@ -194,7 +196,10 @@ var _ = Describe("ReplicationDestination", func() {
 					},
 				},
 			}
+
+			// kubectl create -f PersistentVolumeClaim.yaml -n rd.Namespace
 			Expect(k8sClient.Create(ctx, pvc)).To(Succeed())
+			// creates a ReplicationDestination with the rsync spec
 			rd.Spec.Rsync = &scribev1alpha1.ReplicationDestinationRsyncSpec{
 				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
 					DestinationPVC: &pvc.Name,
@@ -204,8 +209,11 @@ var _ = Describe("ReplicationDestination", func() {
 		It("is used as the target PVC", func() {
 			job := &batchv1.Job{}
 			Eventually(func() error {
+				// kubectl get scribe-rsync-dest-{rd.Name} -n {rd.Name}
 				return k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rsync-dest-" + rd.Name, Namespace: rd.Namespace}, job)
 			}, maxWait, interval).Should(Succeed())
+
+			// determine if our PVC is being used as the target
 			volumes := job.Spec.Template.Spec.Volumes
 			found := false
 			for _, v := range volumes {

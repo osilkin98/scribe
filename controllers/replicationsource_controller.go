@@ -949,6 +949,7 @@ func (r *rsyncSrcReconciler) ensureJob(l logr.Logger) (bool, error) {
 func (r *rsyncSrcReconciler) cleanupJob(l logr.Logger) (bool, error) {
 	logger := l.WithValues("job", r.job)
 	// update time/duration
+	logger.Info("cleaning up rsync job")
 	if cont, err := updateLastSyncSource(r.Instance, r.scribeMetrics, logger); !cont || err != nil {
 		return cont, err
 	}
@@ -1011,6 +1012,12 @@ func (r *resticSrcReconciler) cleanupJob(l logr.Logger) (bool, error) {
 }
 
 func (r *rcloneSrcReconciler) validateRcloneSpec(l logr.Logger) (bool, error) {
+	logger := l.WithValues("job", r.job)
+	logger.Info("Validating RClone spec")
+	logger.Info("RcloneConfig: " + *r.Instance.Spec.Rclone.RcloneConfig)
+	logger.Info("RcloneConfigSection: " + *r.Instance.Spec.Rclone.RcloneConfigSection)
+	logger.Info("RcloneDestPath: " + *r.Instance.Spec.Rclone.RcloneDestPath)
+
 	if len(*r.Instance.Spec.Rclone.RcloneConfig) == 0 {
 		err := errors.New("Unable to get Rclone config secret name")
 		l.V(1).Info("Unable to get Rclone config secret name")

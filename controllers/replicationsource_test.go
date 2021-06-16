@@ -137,6 +137,7 @@ var _ = Describe("ReplicationSource", func() {
 				GenerateName: "scribe-test-",
 			},
 		}
+		// creates namespace
 		Expect(k8sClient.Create(ctx, namespace)).To(Succeed())
 		Expect(namespace.Name).NotTo(BeEmpty())
 
@@ -246,6 +247,7 @@ var _ = Describe("ReplicationSource", func() {
 				},
 			}
 		})
+		// invokes reconcile
 		It("uses the source PVC as the sync source", func() {
 			job := &batchv1.Job{}
 			Eventually(func() error {
@@ -271,8 +273,10 @@ var _ = Describe("ReplicationSource", func() {
 				},
 			}
 		})
+		//nolint:dupl
 		It("creates a clone of the source PVC as the sync source", func() {
 			job := &batchv1.Job{}
+
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rsync-src-" + rs.Name, Namespace: rs.Namespace}, job)
 			}, maxWait, interval).Should(Succeed())
