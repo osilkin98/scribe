@@ -863,7 +863,7 @@ func (r *rcloneDestReconciler) ensureJob(l logr.Logger) (bool, error) {
 			parallelism := int32(0)
 			r.job.Spec.Parallelism = &parallelism
 		} else {
-			parallelism := int32(1)
+			parallelism := int32(0)
 			r.job.Spec.Parallelism = &parallelism
 		}
 		if len(r.job.Spec.Template.Spec.Containers) != 1 {
