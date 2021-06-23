@@ -760,7 +760,6 @@ func (r *rsyncDestReconciler) ensureJob(l logr.Logger) (bool, error) {
 			Namespace: jobName.Namespace,
 		},
 	}
-
 	op, err := ctrlutil.CreateOrUpdate(r.Ctx, r.Client, r.job, func() error {
 		if err := ctrl.SetControllerReference(r.Instance, r.job, r.Scheme); err != nil {
 			logger.Error(err, "unable to set controller reference")
@@ -863,7 +862,7 @@ func (r *rcloneDestReconciler) ensureJob(l logr.Logger) (bool, error) {
 			parallelism := int32(0)
 			r.job.Spec.Parallelism = &parallelism
 		} else {
-			parallelism := int32(0)
+			parallelism := int32(1)
 			r.job.Spec.Parallelism = &parallelism
 		}
 		if len(r.job.Spec.Template.Spec.Containers) != 1 {

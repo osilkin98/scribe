@@ -6,7 +6,6 @@ import (
 
 	"context"
 	"fmt"
-
 	// snapv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1beta1"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -14,14 +13,11 @@ import (
 	// "github.com/operator-framework/operator-lib/status"
 	//batchv1 "k8s.io/api/batch/v1"
 
-	batchv1 "k8s.io/api/batch/v1"
+	scribev1alpha1 "github.com/backube/scribe/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-
-	scribev1alpha1 "github.com/backube/scribe/api/v1alpha1"
 )
 
 //nolint:dupl
@@ -114,30 +110,37 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 					DestinationPVC: &pvc.Name,
 				},
 			}
-
 		})
 
 		It("Test if job finishes", func() {
-			job := &batchv1.Job{}
+			//job := &batchv1.Job{}
 			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
 				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
 					DestinationPVC: &pvc.Name,
 				},
 			}
 
-			Eventually(func() int {
-				found := k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rd.Name, Namespace: rd.Namespace}, job)
+			Eventually(func() error {
+				//found := k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rd.Name, Namespace: rd.Namespace}, job)
 				inst := &scribev1alpha1.ReplicationDestination{}
-				rdName := k8sClient.Get(ctx, nameFor(rd), inst)
-				fmt.Printf("======================== rdName: %-v", rdName)
-				fmt.Printf("======================== Found: %-v", found)
-
-				return 23
-			}).Should(BeNumerically(">=", 17))
+				return k8sClient.Get(ctx, nameFor(rd), inst)
+			}, maxWait, interval).Should(Succeed())
+			inst := &scribev1alpha1.ReplicationDestination{}
+			rdName := k8sClient.Get(ctx, nameFor(rd), inst)
+			fmt.Printf("=====RD: %-v\n", rd)
+			fmt.Printf("============= rdName: %-v\n", rdName)
 			Expect(true).To(BeTrue())
 			Expect(pvc).NotTo(beOwnedBy(rd))
-
 		})
 	})
-
+	//
+	//Context("testing timeout", func() {
+	//	It("sleeping until timeout", func(){
+	//		Eventually(func() int {
+	//			return 22
+	//		}, maxWait, interval).Should(BeNumerically("=", 23))
+	//		fmt.Printf("maxWait: %d, interval: %d\n", maxWait, interval)
+	//
+	//	})
+	//})
 })
