@@ -18,7 +18,6 @@ import (
 	// "github.com/operator-framework/operator-lib/status"
 	//batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -57,7 +56,7 @@ var _ = Describe("ReplicationSource [rclone]", func() {
 				Namespace: namespace.Name,
 			},
 			Spec: corev1.PersistentVolumeClaimSpec{
-				AccessModes: []corev1.PersistentVolumeAccessMode{v1.ReadWriteOnce},
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
 						corev1.ResourceStorage: srcPVCCapacity,
@@ -144,7 +143,6 @@ var _ = Describe("ReplicationSource [rclone]", func() {
 		It("Uses the Source PVC as the sync source", func() {
 			job := &batchv1.Job{}
 			Eventually(func() error {
-				fmt.Printf("ReplicationSource so far: %+v\n", rs)
 				return k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rs.Name, Namespace: rs.Namespace}, job)
 			}, maxWait, interval).Should(Succeed())
 			volumes := job.Spec.Template.Spec.Volumes

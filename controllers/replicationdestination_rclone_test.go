@@ -5,7 +5,8 @@ import (
 	// "time"
 
 	"context"
-	"fmt"
+	// "fmt"
+
 	// snapv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1beta1"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -15,19 +16,16 @@ import (
 
 	scribev1alpha1 "github.com/backube/scribe/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 //nolint:dupl
 var _ = Describe("ReplicationDestination [rclone]", func() {
-
 	var ctx = context.Background()
 	var namespace *corev1.Namespace
 	var rd *scribev1alpha1.ReplicationDestination
 	var rcloneSecret *corev1.Secret
-
 	var configSection = "foo"
 	var destPath = "bar"
 
@@ -35,7 +33,7 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 	BeforeEach(func() {
 		namespace = &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
-				GenerateName: "scribe-rclone-src-",
+				GenerateName: "scribe-rclone-dest-",
 			},
 		}
 		// crete ns
@@ -88,17 +86,17 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 
 	//nolint:dupl
 	Context("when a destinationPVC is specified", func() {
-		var pvc *v1.PersistentVolumeClaim
+		var pvc *corev1.PersistentVolumeClaim
 		BeforeEach(func() {
-			pvc = &v1.PersistentVolumeClaim{
+			pvc = &corev1.PersistentVolumeClaim{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: rd.Namespace,
 				},
-				Spec: v1.PersistentVolumeClaimSpec{
-					AccessModes: []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce},
-					Resources: v1.ResourceRequirements{
-						Requests: v1.ResourceList{
+				Spec: corev1.PersistentVolumeClaimSpec{
+					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
 							"storage": resource.MustParse("2Gi"),
 						},
 					},
@@ -109,38 +107,55 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
 					DestinationPVC: &pvc.Name,
 				},
+				RcloneConfigSection: &configSection,
+				RcloneDestPath:      &destPath,
+				RcloneConfig:        &rcloneSecret.Name,
 			}
 		})
 
 		It("Test if job finishes", func() {
 			//job := &batchv1.Job{}
-			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
-				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
-					DestinationPVC: &pvc.Name,
-				},
-			}
-
 			Eventually(func() error {
-				//found := k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rd.Name, Namespace: rd.Namespace}, job)
 				inst := &scribev1alpha1.ReplicationDestination{}
 				return k8sClient.Get(ctx, nameFor(rd), inst)
 			}, maxWait, interval).Should(Succeed())
-			inst := &scribev1alpha1.ReplicationDestination{}
-			rdName := k8sClient.Get(ctx, nameFor(rd), inst)
-			fmt.Printf("=====RD: %-v\n", rd)
-			fmt.Printf("============= rdName: %-v\n", rdName)
 			Expect(true).To(BeTrue())
 			Expect(pvc).NotTo(beOwnedBy(rd))
 		})
 	})
-	//
-	//Context("testing timeout", func() {
-	//	It("sleeping until timeout", func(){
-	//		Eventually(func() int {
-	//			return 22
-	//		}, maxWait, interval).Should(BeNumerically("=", 23))
-	//		fmt.Printf("maxWait: %d, interval: %d\n", maxWait, interval)
-	//
-	//	})
-	//})
+
+	Context("When a schedule is provided", func() {
+		var schedule = "*/1 * * * *"
+		BeforeEach(func() {
+			capacity := resource.MustParse("2Gi")
+			accessModes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
+				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
+					Capacity:    &capacity,
+					AccessModes: accessModes,
+					CopyMethod:  scribev1alpha1.CopyMethodSnapshot,
+				},
+				RcloneDestPath:      &destPath,
+				RcloneConfig:        &rcloneSecret.Name,
+				RcloneConfigSection: &configSection,
+			}
+			rd.Spec.Trigger = &scribev1alpha1.ReplicationDestinationTriggerSpec{
+				Schedule: &schedule,
+			}
+		})
+
+		It("Provided a schedule", func() {
+			Eventually(func() error {
+				inst := &scribev1alpha1.ReplicationDestination{}
+				return k8sClient.Get(ctx, nameFor(rd), inst)
+			}, maxWait, interval).Should(Succeed())
+			Expect(rd.Status).NotTo(BeNil())
+			Expect(rd.Status)
+			Expect(rd.Status.LatestImage).NotTo(BeNil())
+			Expect(rd.Status.LatestImage.Name).NotTo(BeEmpty())
+		})
+	})
+
+	/** start with covering ensureJob **/
+	/** create a PR **/
 })
