@@ -26,6 +26,7 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 	var configSection = "foo"
 	var destPath = "bar"
 	var pvc *corev1.PersistentVolumeClaim
+	var schedule = "*/4 * * * *"
 
 	// setup namespace && PVC
 	BeforeEach(func() {
@@ -87,7 +88,7 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 	})
 
 	//nolint:dupl
-	Context("when a destinationPVC is specified", func() {
+	Context("When ReplicationDestination is provided with a minimal rclone spec", func() {
 		// var pvc *corev1.PersistentVolumeClaim
 		// BeforeEach(func() {
 		// 	Expect(k8sClient.Create(ctx, pvc)).To(Succeed())
@@ -102,33 +103,66 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 		// })
 
 		BeforeEach(func() {
+			capacity := resource.MustParse("2Gi")
 			// uses copymethod + accessModes instead
 			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
 				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
 					CopyMethod:  scribev1alpha1.CopyMethodSnapshot,
 					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Capacity:    &capacity,
 				},
 				RcloneConfigSection: &configSection,
 				RcloneDestPath:      &destPath,
 				RcloneConfig:        &rcloneSecret.Name,
 			}
+			rd.Spec.Trigger = &scribev1alpha1.ReplicationDestinationTriggerSpec{
+				Schedule: &schedule,
+			}
 		})
-		It("Test if job finishes", func() {
+
+		It("Ensure that ReplicationDestination starts", func() {
 			//job := &batchv1.Job{}
 			Eventually(func() error {
 				inst := &scribev1alpha1.ReplicationDestination{}
 				return k8sClient.Get(ctx, nameFor(rd), inst)
 			}, maxWait, interval).Should(Succeed())
-			fmt.Printf("\n\nReplicationDestination: %+v\n\n", rd)
 			Eventually(func() bool {
 				inst := &scribev1alpha1.ReplicationDestination{}
 				if err := k8sClient.Get(ctx, nameFor(rd), inst); err != nil {
 					return false
 				}
-				return rd.Status != nil
-
+				if inst.Status == nil {
+					return false
+				} else {
+					return true
+				}
 			}, maxWait, interval).Should(BeTrue())
-			Expect(rd.Status).To(Not(BeNil()))
+			inst := &scribev1alpha1.ReplicationDestination{}
+			Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
+			Expect(inst.Status).NotTo(BeNil())
+			Expect(inst.Status.Conditions).NotTo(BeNil())
+			Expect(inst.Status.NextSyncTime).NotTo(BeNil())
+		})
+
+		It("Wait until ReplicationDestination syncs", func() {
+			inst := &scribev1alpha1.ReplicationDestination{}
+			Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
+			fmt.Printf("*************\n*************inst: %+v\n*****\n*****", rd.Status)
+			Eventually(func() bool {
+				fmt.Printf("\n\npolling...\n\n")
+				inst := &scribev1alpha1.ReplicationDestination{}
+				err := k8sClient.Get(ctx, nameFor(rd), inst)
+				if err != nil {
+					fmt.Printf("got error: %+v returning false\n\n", err)
+					return false
+				}
+
+				if inst.Status != nil && inst.Status.LastSyncTime != nil {
+					fmt.Printf("lastSyncTime exists, returning true\n\n")
+					return true
+				}
+				return false
+			}, maxWait, interval).Should(BeTrue())
 		})
 	})
 
