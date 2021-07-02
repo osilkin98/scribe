@@ -12,6 +12,7 @@ import (
 	//batchv1 "k8s.io/api/batch/v1"
 
 	scribev1alpha1 "github.com/backube/scribe/api/v1alpha1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,25 +90,12 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 
 	//nolint:dupl
 	Context("When ReplicationDestination is provided with a minimal rclone spec", func() {
-		// var pvc *corev1.PersistentVolumeClaim
-		// BeforeEach(func() {
-		// 	Expect(k8sClient.Create(ctx, pvc)).To(Succeed())
-		// 	rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
-		// 		ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
-		// 			DestinationPVC: &pvc.Name,
-		// 		},
-		// 		RcloneConfigSection: &configSection,
-		// 		RcloneDestPath:      &destPath,
-		// 		RcloneConfig:        &rcloneSecret.Name,
-		// 	}
-		// })
-
 		BeforeEach(func() {
 			capacity := resource.MustParse("2Gi")
 			// uses copymethod + accessModes instead
 			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
 				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
-					CopyMethod:  scribev1alpha1.CopyMethodSnapshot,
+					CopyMethod:  scribev1alpha1.CopyMethodNone,
 					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 					Capacity:    &capacity,
 				},
@@ -120,6 +108,19 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 			}
 		})
 
+		JustBeforeEach(func() {
+			job := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "scribe-rclone-src-" + rd.Name,
+					Namespace: rd.Namespace,
+				},
+			}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, nameFor(job), job)
+			}, maxWait, interval).Should(Succeed())
+			job.Status.Succeeded = 1
+			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+		})
 		It("Ensure that ReplicationDestination starts", func() {
 			//job := &batchv1.Job{}
 			Eventually(func() error {
@@ -149,22 +150,46 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 			Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
 			fmt.Printf("*************\n*************inst: %+v\n*****\n*****", rd.Status)
 			Eventually(func() bool {
-				fmt.Printf("\n\npolling...\n\n")
 				inst := &scribev1alpha1.ReplicationDestination{}
 				err := k8sClient.Get(ctx, nameFor(rd), inst)
 				if err != nil {
-					fmt.Printf("got error: %+v returning false\n\n", err)
 					return false
 				}
 
 				if inst.Status != nil && inst.Status.LastSyncTime != nil {
-					fmt.Printf("lastSyncTime exists, returning true\n\n")
 					return true
 				}
 				return false
 			}, maxWait, interval).Should(BeTrue())
+			Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
+			Expect(inst.Status.LatestImage).NotTo(BeNil())
 		})
 	})
+
+	// todo: test failure conditions
+	// 		- job failing & gracefully being deleted for recreation
+	//		- rclone secret failing to validate
+	//		- job cleanup with a nil start time
+	//		- failing to update last sync destination on cleanup
+	//
+	// todo: ensureJob
+	//		- failing to set controller reference
+	//		- pausing rcloneDestReconciler -> r.Instance.Spec.Paused set to 1
+	//		- r.job.Status.Failed >= *r.job.Spec.BackoffLimit
+	//		- err := ctrlutil.CreateOrUpdate; err != nil
+	//
+	// todo: ensureRcloneConfig
+	//		- getAndValidateSecret returning an error
+	//
+	// todo: awaitNextSyncDestination
+	//		- updateNextSyncDestination returns an error
+	//		- rd.Spec.Trigger != nil and rd.Spec.Trigger.Manual != "" and rd.Spec.Trigger.Manual == rd.Status.LastManualSync
+	//
+	// todo: updateNextSyncDestination
+	//		- parser.Parse(Schedule) returns error
+	//		- pastScheduleDeadline(schedule, rd.Status.LastSyncTime.Time, time.Now
+	// 		- no schedule w/ manual trigger or schedule w/ manual trigger
+	//
 
 	// Context("When a schedule is provided", func() {
 	// 	var schedule = "*/1 * * * *"
