@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"time"
 
 	// snapv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1beta1"
 	snapv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1beta1"
@@ -121,6 +122,9 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 				return k8sClient.Get(ctx, nameFor(job), job)
 			}, maxWait, interval).Should(Succeed())
 			job.Status.Succeeded = 1
+			job.Status.StartTime = &metav1.Time{
+				Time: time.Now(),
+			}
 			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 		})
 
@@ -167,10 +171,19 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 				Expect(latestImage.Kind).To(Equal("PersistentVolumeClaim"))
 				Expect(*latestImage.APIGroup).To(Equal(""))
 				Expect(latestImage.Name).NotTo(Equal(""))
+			})
 
+			It("Duration is set if job is successful", func() {
+				// Make sure that LastSyncDuration gets set
+				Eventually(func() *metav1.Duration {
+					inst := &scribev1alpha1.ReplicationDestination{}
+					_ = k8sClient.Get(ctx, nameFor(rd), inst)
+					return inst.Status.LastSyncDuration
+				}, maxWait, interval).Should(Not(BeNil()))
 			})
 		})
 		Context("Using a copy method of Snapshot", func() {
+
 			BeforeEach(func() {
 				rd.Spec.Rclone.CopyMethod = scribev1alpha1.CopyMethodSnapshot
 			})
