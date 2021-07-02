@@ -2,11 +2,12 @@ package controllers
 
 import (
 	"context"
-	"fmt"
 
 	// snapv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1beta1"
+	snapv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1beta1"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	// "github.com/operator-framework/operator-lib/status"
 	//batchv1 "k8s.io/api/batch/v1"
@@ -14,6 +15,7 @@ import (
 	scribev1alpha1 "github.com/backube/scribe/api/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -95,7 +97,6 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 			// uses copymethod + accessModes instead
 			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
 				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
-					CopyMethod:  scribev1alpha1.CopyMethodNone,
 					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 					Capacity:    &capacity,
 				},
@@ -109,6 +110,7 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 		})
 
 		JustBeforeEach(func() {
+			// ensure that the Job will reach cleanupJob
 			job := &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "scribe-rclone-src-" + rd.Name,
@@ -121,48 +123,78 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 			job.Status.Succeeded = 1
 			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 		})
-		It("Ensure that ReplicationDestination starts", func() {
-			//job := &batchv1.Job{}
-			Eventually(func() error {
+
+		Context("Using a CopyMethod of None", func() {
+			BeforeEach(func() {
+				rd.Spec.Rclone.CopyMethod = scribev1alpha1.CopyMethodNone
+			})
+
+			It("Ensure that ReplicationDestination starts", func() {
+				//job := &batchv1.Job{}
+				Eventually(func() error {
+					inst := &scribev1alpha1.ReplicationDestination{}
+					return k8sClient.Get(ctx, nameFor(rd), inst)
+				}, maxWait, interval).Should(Succeed())
+				Eventually(func() bool {
+					inst := &scribev1alpha1.ReplicationDestination{}
+					if err := k8sClient.Get(ctx, nameFor(rd), inst); err != nil {
+						return false
+					}
+					return inst.Status != nil
+				}, maxWait, interval).Should(BeTrue())
 				inst := &scribev1alpha1.ReplicationDestination{}
-				return k8sClient.Get(ctx, nameFor(rd), inst)
-			}, maxWait, interval).Should(Succeed())
-			Eventually(func() bool {
+				Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
+				Expect(inst.Status).NotTo(BeNil())
+				Expect(inst.Status.Conditions).NotTo(BeNil())
+				Expect(inst.Status.NextSyncTime).NotTo(BeNil())
+			})
+
+			It("Ensure LastSyncTime & LatestImage is set properly after reconcilation", func() {
+				Eventually(func() bool {
+					inst := &scribev1alpha1.ReplicationDestination{}
+					err := k8sClient.Get(ctx, nameFor(rd), inst)
+					if err != nil || inst.Status == nil {
+						return false
+					}
+					return inst.Status.LastSyncTime != nil
+				}, maxWait, interval).Should(BeTrue())
+				// get ReplicationDestination
 				inst := &scribev1alpha1.ReplicationDestination{}
-				if err := k8sClient.Get(ctx, nameFor(rd), inst); err != nil {
-					return false
-				}
-				if inst.Status == nil {
-					return false
-				} else {
-					return true
-				}
-			}, maxWait, interval).Should(BeTrue())
-			inst := &scribev1alpha1.ReplicationDestination{}
-			Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
-			Expect(inst.Status).NotTo(BeNil())
-			Expect(inst.Status.Conditions).NotTo(BeNil())
-			Expect(inst.Status.NextSyncTime).NotTo(BeNil())
+				Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
+				// ensure Status holds correct data
+				Expect(inst.Status.LatestImage).NotTo(BeNil())
+				latestImage := inst.Status.LatestImage
+				Expect(latestImage.Kind).To(Equal("PersistentVolumeClaim"))
+				Expect(*latestImage.APIGroup).To(Equal(""))
+				Expect(latestImage.Name).NotTo(Equal(""))
+
+			})
 		})
-
-		It("Wait until ReplicationDestination syncs", func() {
-			inst := &scribev1alpha1.ReplicationDestination{}
-			Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
-			fmt.Printf("*************\n*************inst: %+v\n*****\n*****", rd.Status)
-			Eventually(func() bool {
-				inst := &scribev1alpha1.ReplicationDestination{}
-				err := k8sClient.Get(ctx, nameFor(rd), inst)
-				if err != nil {
-					return false
+		Context("Using a copy method of Snapshot", func() {
+			BeforeEach(func() {
+				rd.Spec.Rclone.CopyMethod = scribev1alpha1.CopyMethodSnapshot
+			})
+			It("Ensure that a VolumeSnapshot is created at the end of an iteration", func() {
+				snapshots := &snapv1.VolumeSnapshotList{}
+				Eventually(func() []snapv1.VolumeSnapshot {
+					_ = k8sClient.List(ctx, snapshots, client.InNamespace(rd.Namespace))
+					return snapshots.Items
+				}, maxWait, interval).Should(Not(BeEmpty()))
+				snapshot := snapshots.Items[0]
+				foo := "dummysnapshot"
+				snapshot.Status = &snapv1.VolumeSnapshotStatus{
+					BoundVolumeSnapshotContentName: &foo,
 				}
-
-				if inst.Status != nil && inst.Status.LastSyncTime != nil {
-					return true
-				}
-				return false
-			}, maxWait, interval).Should(BeTrue())
-			Expect(k8sClient.Get(ctx, nameFor(rd), inst)).To(Succeed())
-			Expect(inst.Status.LatestImage).NotTo(BeNil())
+				Expect(k8sClient.Status().Update(ctx, &snapshot)).To(Succeed())
+				Eventually(func() *v1.TypedLocalObjectReference {
+					_ = k8sClient.Get(ctx, nameFor(rd), rd)
+					return rd.Status.LatestImage
+				}, maxWait, interval).Should(Not(BeNil()))
+				latestImage := rd.Status.LatestImage
+				Expect(latestImage.Kind).To(Equal("VolumeSnapshot"))
+				Expect(*latestImage.APIGroup).To(Equal(snapv1.SchemeGroupVersion.Group))
+				Expect(latestImage).To(Not(Equal("")))
+			})
 		})
 	})
 
