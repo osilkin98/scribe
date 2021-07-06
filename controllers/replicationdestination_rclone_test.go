@@ -276,56 +276,118 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 	// })
 
 	When("The secret is sus", func() {
-		BeforeEach(func() {
-			// setup a sus secret
-			rcloneSecret = &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "rclone-secret",
-					Namespace: namespace.Name,
-				},
-				StringData: map[string]string{
-					"field-redacted": "this data is trash",
-				},
-			}
-			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
-				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
-					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-					Capacity:    &capacity,
-				},
-				RcloneConfigSection: &configSection,
-				RcloneDestPath:      &destPath,
-				RcloneConfig:        &rcloneSecret.Name,
-			}
+		Context("Secret isn't provided with the correct fields", func() {
+			BeforeEach(func() {
+				// setup a sus secret
+				rcloneSecret = &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "rclone-secret",
+						Namespace: namespace.Name,
+					},
+					StringData: map[string]string{
+						"field-redacted": "this data is trash",
+					},
+				}
+				rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
+					ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
+						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						Capacity:    &capacity,
+					},
+					RcloneConfigSection: &configSection,
+					RcloneDestPath:      &destPath,
+					RcloneConfig:        &rcloneSecret.Name,
+				}
+			})
+			It("Reconcile Condition is set to false", func() {
+				// make sure that the condition is set to not be reconciled
+				inst := &scribev1alpha1.ReplicationDestination{}
+				// wait for replicationdestination to have a status
+				Eventually(func() *scribev1alpha1.ReplicationDestinationStatus {
+					_ = k8sClient.Get(ctx, nameFor(rd), inst)
+					return inst.Status
+				}, duration, interval).Should(Not(BeNil()))
+				Expect(inst.Status.Conditions).ToNot(BeEmpty())
+				reconcileCondition := inst.Status.Conditions.GetCondition(scribev1alpha1.ConditionReconciled)
+				Expect(reconcileCondition).ToNot(BeNil())
+				Expect(reconcileCondition.Status).To(Equal(corev1.ConditionFalse))
+			})
 		})
-		It("Reconcile Condition is set to false", func() {
-			// make sure that the condition is set to not be reconciled
-			inst := &scribev1alpha1.ReplicationDestination{}
-			// wait for replicationdestination to have a status
-			Eventually(func() *scribev1alpha1.ReplicationDestinationStatus {
-				_ = k8sClient.Get(ctx, nameFor(rd), inst)
-				return inst.Status
-			}, duration, interval).Should(Not(BeNil()))
-			Expect(inst.Status.Conditions).ToNot(BeEmpty())
-			reconcileCondition := inst.Status.Conditions.GetCondition(scribev1alpha1.ConditionReconciled)
-			Expect(reconcileCondition).ToNot(BeNil())
-			Expect(reconcileCondition.Status).To(Equal(corev1.ConditionFalse))
+
+		// test each of the possible configurations
+		Context("Secret fields are zero-length", func() {
+			BeforeEach(func() {
+				// initialize all config sections to zero length
+				var zeroLength = ""
+				rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
+					ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
+						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						Capacity:    &capacity,
+					},
+					RcloneConfigSection: &zeroLength,
+					RcloneDestPath:      &zeroLength,
+					RcloneConfig:        &zeroLength,
+				}
+				rd.Spec.Trigger = &scribev1alpha1.ReplicationDestinationTriggerSpec{
+					Schedule: &schedule,
+				}
+				// setup a minimal job
+				job = &batchv1.Job{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "scribe-rclone-src-" + rd.Name,
+						Namespace: rd.Namespace,
+					},
+				}
+			})
+			It("No spec at all", func() {
+				Consistently(func() error {
+					return k8sClient.Get(ctx, nameFor(job), job)
+				}, duration, interval).ShouldNot(Succeed())
+			})
+
+			When("Some of the config sections are provided", func() {
+				Context("RcloneConfig", func() {
+					BeforeEach(func() {
+						rd.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
+					})
+					It("RcloneConfig is provided", func() {
+						Consistently(func() error {
+							return k8sClient.Get(ctx, nameFor(job), job)
+						}, duration, interval).ShouldNot(Succeed())
+					})
+				})
+				Context("RcloneConfig + RcloneConfigSection", func() {
+					BeforeEach(func() {
+						rd.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
+						rd.Spec.Rclone.RcloneConfigSection = &configSection
+					})
+					It("RcloneConfig & RcloneConfigSection are set to non-nil", func() {
+						Consistently(func() error {
+							return k8sClient.Get(ctx, nameFor(job), job)
+						}, duration, interval).ShouldNot(Succeed())
+					})
+				})
+				Context("Everything is provided", func() {
+					BeforeEach(func() {
+						rd.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
+						rd.Spec.Rclone.RcloneConfigSection = &configSection
+						rd.Spec.Rclone.RcloneDestPath = &destPath
+					})
+					It("Job successfully starts", func() {
+						Eventually(func() error {
+							return k8sClient.Get(ctx, nameFor(job), job)
+						}, duration, interval).Should(Succeed())
+					})
+				})
+			})
 		})
 	})
 
 	// todo: test failure conditions
 	// 		- job failing & gracefully being deleted for recreation
-	//		- rclone secret failing to validate
-	//		- job cleanup with a nil start time
 	//		- failing to update last sync destination on cleanup
 	//
 	// todo: ensureJob
 	//		- failing to set controller reference
-	//		- pausing rcloneDestReconciler -> r.Instance.Spec.Paused set to 1
-	//		- r.job.Status.Failed >= *r.job.Spec.BackoffLimit
-	//		- err := ctrlutil.CreateOrUpdate; err != nil
-	//
-	// todo: ensureRcloneConfig
-	//		- getAndValidateSecret returning an error
 	//
 	// todo: awaitNextSyncDestination
 	//		- updateNextSyncDestination returns an error
