@@ -30,7 +30,9 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 	var configSection = "foo"
 	var destPath = "bar"
 	var pvc *corev1.PersistentVolumeClaim
+	var job *batchv1.Job
 	var schedule = "*/4 * * * *"
+	var capacity = resource.MustParse("2Gi")
 
 	// setup namespace && PVC
 	BeforeEach(func() {
@@ -53,7 +55,7 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
-						"storage": resource.MustParse("10Gi"),
+						"storage": resource.MustParse("2Gi"),
 					},
 				},
 			},
@@ -67,6 +69,7 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 				"rclone.conf": "hunter2",
 			},
 		}
+		// scaffolded ReplicationDestination - extra fields will be set in subsequent tests
 		rd = &scribev1alpha1.ReplicationDestination{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "instance",
@@ -94,7 +97,6 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 	//nolint:dupl
 	Context("When ReplicationDestination is provided with a minimal rclone spec", func() {
 		BeforeEach(func() {
-			capacity := resource.MustParse("2Gi")
 			// uses copymethod + accessModes instead
 			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
 				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
@@ -108,27 +110,28 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 			rd.Spec.Trigger = &scribev1alpha1.ReplicationDestinationTriggerSpec{
 				Schedule: &schedule,
 			}
-		})
-
-		JustBeforeEach(func() {
-			// ensure that the Job will reach cleanupJob
-			job := &batchv1.Job{
+			// setup a minimal job
+			job = &batchv1.Job{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "scribe-rclone-src-" + rd.Name,
 					Namespace: rd.Namespace,
 				},
 			}
+		})
+
+		JustBeforeEach(func() {
+			// force job to succeed
 			Eventually(func() error {
 				return k8sClient.Get(ctx, nameFor(job), job)
 			}, maxWait, interval).Should(Succeed())
 			job.Status.Succeeded = 1
-			job.Status.StartTime = &metav1.Time{
+			job.Status.StartTime = &metav1.Time{ // provide job with a start time
 				Time: time.Now(),
 			}
 			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 		})
 
-		Context("Using a CopyMethod of None", func() {
+		When("Using a CopyMethod of None", func() {
 			BeforeEach(func() {
 				rd.Spec.Rclone.CopyMethod = scribev1alpha1.CopyMethodNone
 			})
@@ -181,9 +184,27 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 					return inst.Status.LastSyncDuration
 				}, maxWait, interval).Should(Not(BeNil()))
 			})
-		})
-		Context("Using a copy method of Snapshot", func() {
 
+			When("The ReplicationDestinaton spec is paused", func() {
+				BeforeEach(func() {
+					rd.Spec.Paused = true
+				})
+				It("Job has parallelism disabled", func() {
+					job := &batchv1.Job{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "scribe-rclone-src-" + rd.Name,
+							Namespace: rd.Namespace,
+						},
+					}
+					Eventually(func() error {
+						return k8sClient.Get(ctx, nameFor(job), job)
+					}, maxWait, interval).Should(Succeed())
+					Expect(*job.Spec.Parallelism).To(Equal(int32(0)))
+				})
+			})
+		})
+
+		When("Using a copy method of Snapshot", func() {
 			BeforeEach(func() {
 				rd.Spec.Rclone.CopyMethod = scribev1alpha1.CopyMethodSnapshot
 			})
@@ -208,6 +229,86 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 				Expect(*latestImage.APIGroup).To(Equal(snapv1.SchemeGroupVersion.Group))
 				Expect(latestImage).To(Not(Equal("")))
 			})
+		})
+
+		It("Job set to fail", func() {
+			Eventually(func() error {
+				return k8sClient.Get(ctx, nameFor(job), job)
+			}, maxWait, interval).Should(Succeed())
+			// force job fail state
+			job.Status.Failed = *job.Spec.BackoffLimit + 1000
+			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+		})
+	})
+
+	// When("The Job Fails", func() {
+	// 	BeforeEach(func() {
+	// 		// uses copymethod + accessModes instead
+	// 		rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
+	// 			ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
+	// 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+	// 				Capacity:    &capacity,
+	// 			},
+	// 			RcloneConfigSection: &configSection,
+	// 			RcloneDestPath:      &destPath,
+	// 			RcloneConfig:        &rcloneSecret.Name,
+	// 		}
+	// 		rd.Spec.Trigger = &scribev1alpha1.ReplicationDestinationTriggerSpec{
+	// 			Schedule: &schedule,
+	// 		}
+	// 		// rd.Spec.Paused = true
+	// 		// setup a minimal job
+	// 		job = &batchv1.Job{
+	// 			ObjectMeta: metav1.ObjectMeta{
+	// 				Name:      "scribe-rclone-src-" + rd.Name,
+	// 				Namespace: rd.Namespace,
+	// 			},
+	// 		}
+	// 	})
+	// 	It("Job gets deleted", func() {
+	// 		Eventually(func() error {
+	// 			return k8sClient.Get(ctx, nameFor(job), job)
+	// 		}, maxWait, interval).Should(Succeed())
+	// 		// force job fail state
+	// 		job.Status.Failed = *job.Spec.BackoffLimit + 1000
+	// 		Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+	// 	})
+	// })
+
+	When("The secret is sus", func() {
+		BeforeEach(func() {
+			// setup a sus secret
+			rcloneSecret = &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "rclone-secret",
+					Namespace: namespace.Name,
+				},
+				StringData: map[string]string{
+					"field-redacted": "this data is trash",
+				},
+			}
+			rd.Spec.Rclone = &scribev1alpha1.ReplicationDestinationRcloneSpec{
+				ReplicationDestinationVolumeOptions: scribev1alpha1.ReplicationDestinationVolumeOptions{
+					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Capacity:    &capacity,
+				},
+				RcloneConfigSection: &configSection,
+				RcloneDestPath:      &destPath,
+				RcloneConfig:        &rcloneSecret.Name,
+			}
+		})
+		It("Reconcile Condition is set to false", func() {
+			// make sure that the condition is set to not be reconciled
+			inst := &scribev1alpha1.ReplicationDestination{}
+			// wait for replicationdestination to have a status
+			Eventually(func() *scribev1alpha1.ReplicationDestinationStatus {
+				_ = k8sClient.Get(ctx, nameFor(rd), inst)
+				return inst.Status
+			}, duration, interval).Should(Not(BeNil()))
+			Expect(inst.Status.Conditions).ToNot(BeEmpty())
+			reconcileCondition := inst.Status.Conditions.GetCondition(scribev1alpha1.ConditionReconciled)
+			Expect(reconcileCondition).ToNot(BeNil())
+			Expect(reconcileCondition.Status).To(Equal(corev1.ConditionFalse))
 		})
 	})
 
