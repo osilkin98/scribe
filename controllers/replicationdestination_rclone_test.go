@@ -290,7 +290,7 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 							return snapshots.Items
 						}, maxWait, interval).Should(Not(BeEmpty()))
 						snapshot := snapshots.Items[0]
-						Expect(snapshot.Spec.VolumeSnapshotClassName).To(Equal(vscName))
+						Expect(*snapshot.Spec.VolumeSnapshotClassName).To(Equal(vscName))
 					})
 				})
 			})
@@ -301,7 +301,9 @@ var _ = Describe("ReplicationDestination [rclone]", func() {
 				}, maxWait, interval).Should(Succeed())
 				// force job fail state
 				job.Status.Failed = *job.Spec.BackoffLimit + 1000
-				Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+				Eventually(func() error {
+					return k8sClient.Status().Update(ctx, job)
+				}, duration, interval).Should(Succeed())
 				// job should eventually be restarted
 				Eventually(func() error {
 					return k8sClient.Get(ctx, nameFor(job), job)
