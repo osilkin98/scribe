@@ -514,142 +514,190 @@ var _ = Describe("ReplicationSource [rclone]", func() {
 		Expect(k8sClient.Delete(ctx, namespace)).To(Succeed())
 	})
 	JustBeforeEach(func() {
-		// source pvc comes up
 		Expect(k8sClient.Create(ctx, srcPVC)).To(Succeed())
 		Expect(k8sClient.Create(ctx, rcloneSecret)).To(Succeed())
-		Expect(k8sClient.Create(ctx, rs)).To(Succeed())
-		// wait for the ReplicationSource to actually come up
-		Eventually(func() error {
-			inst := &scribev1alpha1.ReplicationSource{}
-			return k8sClient.Get(ctx, nameFor(rs), inst)
-		}, maxWait, interval).Should(Succeed())
 	})
-
-	When("ReplicationSource is provided with an Rclone spec", func() {
+	When("Components are expected to start", func() {
 		JustBeforeEach(func() {
-			// just so the tests will run for now
-			job.Status.Succeeded = 1
-		})
-		Context("when a schedule is not specified", func() {
-			BeforeEach(func() {
-				// changing this block from Rsync to Rclone causes the unit
-				rs.Spec.Rclone = &scribev1alpha1.ReplicationSourceRcloneSpec{
-					ReplicationSourceVolumeOptions: scribev1alpha1.ReplicationSourceVolumeOptions{
-						CopyMethod: scribev1alpha1.CopyMethodNone,
-					},
-					RcloneConfigSection: &configSection,
-					RcloneDestPath:      &destPath,
-					RcloneConfig:        &rcloneSecret.Name,
-				}
-			})
-			// we should not be syncing again if no schedule is specified
-			It("the next sync time is nil", func() {
-				Consistently(func() bool {
-					// replication source should exist within k8s cluster
-					Expect(k8sClient.Get(ctx, nameFor(rs), rs)).To(Succeed())
-					if rs.Status == nil || rs.Status.NextSyncTime.IsZero() {
-						return false
-					}
-					return true
-				}, duration, interval).Should(BeFalse())
-			})
+			// source pvc comes up
+			Expect(k8sClient.Create(ctx, rs)).To(Succeed())
+			// wait for the ReplicationSource to actually come up
+			Eventually(func() error {
+				inst := &scribev1alpha1.ReplicationSource{}
+				return k8sClient.Get(ctx, nameFor(rs), inst)
+			}, maxWait, interval).Should(Succeed())
 		})
 
-		Context("When a copyMethod of None is specified for Rclone", func() {
+		When("ReplicationSource is provided with an Rclone spec", func() {
 			BeforeEach(func() {
 				rs.Spec.Rclone = &scribev1alpha1.ReplicationSourceRcloneSpec{
-					ReplicationSourceVolumeOptions: scribev1alpha1.ReplicationSourceVolumeOptions{
-						CopyMethod: scribev1alpha1.CopyMethodNone,
-					},
-					RcloneConfigSection: &configSection,
-					RcloneDestPath:      &destPath,
-					RcloneConfig:        &rcloneSecret.Name,
+					ReplicationSourceVolumeOptions: scribev1alpha1.ReplicationSourceVolumeOptions{},
+					RcloneConfigSection:            &configSection,
+					RcloneDestPath:                 &destPath,
+					RcloneConfig:                   &rcloneSecret.Name,
 				}
 			})
+			// have to branch these two cases since JustBeforeEach executes from the outside in
+			// When("The Job has failed", func() {
+			// 	BeforeEach(func() {
+			// 		rs.Spec.Rclone.ReplicationSourceVolumeOptions.CopyMethod = scribev1alpha1.CopyMethodNone
+			// 		// rs.Spec.Rclone.ReplicationSourceVolumeOptions.Capacity = &srcPVCCapacity
+			// 		// rs.Spec.Rclone.ReplicationSourceVolumeOptions.AccessModes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+			// 	})
+			// 	JustBeforeEach(func() {
+			// 		Eventually(func() error {
+			// 			return k8sClient.Get(ctx, nameFor(job), job)
+			// 		}, maxWait, interval).Should(Succeed())
+			// 		job.Status.Succeeded = 1
+			// 		job.Status.Failed = 12345
+			// 		job.Status.StartTime = &metav1.Time{ // provide job with a start time
+			// 			Time: time.Now(),
+			// 		}
+			// 		Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 
-			It("Uses the Source PVC as the sync source", func() {
-				job := &batchv1.Job{}
-				Eventually(func() error {
-					return k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rs.Name, Namespace: rs.Namespace}, job)
-				}, maxWait, interval).Should(Succeed())
-				volumes := job.Spec.Template.Spec.Volumes
-				found := false
-				for _, v := range volumes {
-					if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == srcPVC.Name {
-						found = true
-					}
-				}
-				Expect(found).To(BeTrue())
-				Expect(srcPVC).NotTo(beOwnedBy(rs))
+			// 	})
+			// 	// JustBeforeEach(func() {
+			// 	// 	Eventually(func() error {
+			// 	// 		return k8sClient.Get(ctx, nameFor(job), job)
+			// 	// 	}, maxWait, interval).Should(Succeed())
+			// 	// 	// just so the tests will run for now
+			// 	// 	job.Status.Succeeded = 1
+			// 	// 	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+			// 	// })
+			// 	It("reconcile condition becomes false", func() {
+			// 		Eventually(func() error {
+			// 			return k8sClient.Get(ctx, nameFor(job), job)
+			// 		}, maxWait, interval).Should(Succeed())
+			// 		// force job fail state
+			// 		job.Status.Failed = *job.Spec.BackoffLimit + 1000
+			// 		Eventually(func() error {
+			// 			return k8sClient.Status().Update(ctx, job)
+			// 		}, maxWait, interval).Should(Succeed())
+			// 		Eventually(func() bool {
+			// 			inst := &scribev1alpha1.ReplicationSource{}
+			// 			if err := k8sClient.Get(ctx, nameFor(rs), inst); err != nil {
+			// 				return false
+			// 			}
+
+			// 			if inst.Status != nil && inst.Status.Conditions != nil {
+			// 				condition := inst.Status.Conditions.GetCondition(scribev1alpha1.ConditionReconciled)
+			// 				return condition != nil && condition.Status == corev1.ConditionTrue
+			// 			}
+			// 			return false
+			// 		}, maxWait, interval).Should(BeTrue())
+			// 	})
+			// })
+			When("The Job Succeeds", func() {
+				JustBeforeEach(func() {
+					Eventually(func() error {
+						return k8sClient.Get(ctx, nameFor(job), job)
+					}, maxWait, interval).Should(Succeed())
+					// just so the tests will run for now
+					job.Status.Succeeded = 1
+					Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+				})
+				When("copyMethod of None is specified for Rclone", func() {
+					BeforeEach(func() {
+						rs.Spec.Rclone.ReplicationSourceVolumeOptions.CopyMethod = scribev1alpha1.CopyMethodNone
+					})
+
+					When("No schedule is provided to ReplicationSource", func() {
+						It("NextSyncTime is never set", func() {
+							Consistently(func() bool {
+								// replication source should exist within k8s cluster
+								Expect(k8sClient.Get(ctx, nameFor(rs), rs)).To(Succeed())
+								if rs.Status == nil || rs.Status.NextSyncTime.IsZero() {
+									return false
+								}
+								return true
+							}, duration, interval).Should(BeFalse())
+						})
+					})
+
+					When("Schedule is provided", func() {
+						var schedule string
+						When("Schedule is a proper cron format", func() {
+							BeforeEach(func() {
+								schedule = "1 3 3 7 *"
+								rs.Spec.Trigger = &scribev1alpha1.ReplicationSourceTriggerSpec{
+									Schedule: &schedule,
+								}
+							})
+							It("the next sync time is set in Status.NextSyncTime", func() {
+								Eventually(func() bool {
+									Expect(k8sClient.Get(ctx, nameFor(rs), rs)).To(Succeed())
+									if rs.Status == nil || rs.Status.NextSyncTime.IsZero() {
+										return false
+									}
+									return true
+								}, maxWait, interval).Should(BeTrue())
+							})
+						})
+					})
+
+					It("Uses the Source PVC as the sync source", func() {
+						Eventually(func() error {
+							return k8sClient.Get(ctx, nameFor(job), job)
+						}, maxWait, interval).Should(Succeed())
+						volumes := job.Spec.Template.Spec.Volumes
+						found := false
+						for _, v := range volumes {
+							if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == srcPVC.Name {
+								found = true
+							}
+						}
+						Expect(found).To(BeTrue())
+						Expect(srcPVC).NotTo(beOwnedBy(rs))
+					})
+				})
+
+				When("copyMethod of Clone is specified", func() {
+					BeforeEach(func() {
+						rs.Spec.Rclone.ReplicationSourceVolumeOptions.CopyMethod = scribev1alpha1.CopyMethodClone
+					})
+
+					// attempts to invoke rloneReconcile
+					//nolint:dupl
+					It("creates a clone of the source PVC as the sync source", func() {
+						job := &batchv1.Job{}
+						Eventually(func() error {
+							return k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rs.Name, Namespace: rs.Namespace}, job)
+						}, maxWait, interval).Should(Succeed())
+						volumes := job.Spec.Template.Spec.Volumes
+						pvc := &corev1.PersistentVolumeClaim{}
+						pvc.Namespace = rs.Namespace
+						found := false
+						for _, v := range volumes {
+							if v.PersistentVolumeClaim != nil {
+								found = true
+								pvc.Name = v.PersistentVolumeClaim.ClaimName
+							}
+						}
+						Expect(found).To(BeTrue())
+						Expect(k8sClient.Get(ctx, nameFor(pvc), pvc)).To(Succeed())
+						Expect(pvc.Spec.DataSource.Name).To(Equal(srcPVC.Name))
+						Expect(pvc).To(beOwnedBy(rs))
+					})
+
+					// todo: test for sync job being paused
+					// taken after this: https://github.com/backube/scribe/blob/e81281ac0fc1d50c3ae31369495f3c5fe3927a8f/controllers/replicationsource_test.go#L426
+					Context("Pausing an rclone sync job", func() {
+						parallelism := int32(0)
+						BeforeEach(func() {
+							rs.Spec.Paused = true
+						})
+						It("job will be created but won't start", func() {
+							job := &batchv1.Job{}
+							Eventually(func() error {
+								return k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rs.Name, Namespace: rs.Namespace}, job)
+							}, maxWait, interval).Should(Succeed())
+							Expect(*job.Spec.Parallelism).To(Equal(parallelism))
+						})
+					})
+				})
 			})
 		})
-
-		Context("when a copyMethod of Clone is specified", func() {
-			BeforeEach(func() {
-				rs.Spec.Rclone = &scribev1alpha1.ReplicationSourceRcloneSpec{
-					ReplicationSourceVolumeOptions: scribev1alpha1.ReplicationSourceVolumeOptions{
-						CopyMethod: scribev1alpha1.CopyMethodClone,
-					},
-					RcloneConfigSection: &configSection,
-					RcloneDestPath:      &destPath,
-					RcloneConfig:        &rcloneSecret.Name,
-				}
-			})
-
-			// attempts to invoke rloneReconcile
-			//nolint:dupl
-			It("creates a clone of the source PVC as the sync source", func() {
-				job := &batchv1.Job{}
-				Eventually(func() error {
-					return k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rs.Name, Namespace: rs.Namespace}, job)
-				}, maxWait, interval).Should(Succeed())
-				volumes := job.Spec.Template.Spec.Volumes
-				pvc := &corev1.PersistentVolumeClaim{}
-				pvc.Namespace = rs.Namespace
-				found := false
-				for _, v := range volumes {
-					if v.PersistentVolumeClaim != nil {
-						found = true
-						pvc.Name = v.PersistentVolumeClaim.ClaimName
-					}
-				}
-				Expect(found).To(BeTrue())
-				Expect(k8sClient.Get(ctx, nameFor(pvc), pvc)).To(Succeed())
-				Expect(pvc.Spec.DataSource.Name).To(Equal(srcPVC.Name))
-				Expect(pvc).To(beOwnedBy(rs))
-
-			})
-		})
-
-		// todo: test for sync job being paused
-		// taken after this: https://github.com/backube/scribe/blob/e81281ac0fc1d50c3ae31369495f3c5fe3927a8f/controllers/replicationsource_test.go#L426
-		Context("Pausing an rclone sync job", func() {
-			parallelism := int32(0)
-			BeforeEach(func() {
-				rs.Spec.Paused = true
-				rs.Spec.Rclone = &scribev1alpha1.ReplicationSourceRcloneSpec{
-					ReplicationSourceVolumeOptions: scribev1alpha1.ReplicationSourceVolumeOptions{
-						CopyMethod: scribev1alpha1.CopyMethodClone,
-					},
-					RcloneConfigSection: &configSection,
-					RcloneDestPath:      &destPath,
-					RcloneConfig:        &rcloneSecret.Name,
-				}
-			})
-			It("job will be created but won't start", func() {
-				job := &batchv1.Job{}
-				Eventually(func() error {
-					return k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rs.Name, Namespace: rs.Namespace}, job)
-				}, maxWait, interval).Should(Succeed())
-				Expect(*job.Spec.Parallelism).To(Equal(parallelism))
-			})
-		})
-
-		// todo: test rcloneSrcReconciler.cleanupJob
-		//
-		// todo: test invalid rclone Spec
-		// we want to target a job
-		Context("When rclone fails to validate the spec", func() {
+		When("rclone is given an incorrect config", func() {
 			var emptyString = ""
 			BeforeEach(func() {
 				rs.Spec.Rclone = &scribev1alpha1.ReplicationSourceRcloneSpec{
@@ -661,62 +709,56 @@ var _ = Describe("ReplicationSource [rclone]", func() {
 					RcloneDestPath:      &emptyString,
 				}
 			})
-			It("No spec at all", func() {
-				// todo: create this as a job and then test configuration
-				job := &batchv1.Job{}
-				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "scribe-rclone-src-" + rs.Name, Namespace: rs.Namespace}, job)).NotTo(Succeed())
+			When("All fields are empty", func() {
+				It("should not start", func() {
+					Expect(k8sClient.Get(ctx, nameFor(job), job)).NotTo(Succeed())
+				})
+			})
+			When("rclone has secret but nothing else", func() {
+				BeforeEach(func() {
+					rs.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
+				})
+				It("does not start", func() {
+					Expect(k8sClient.Get(ctx, nameFor(job), job)).NotTo(Succeed())
+				})
+			})
+			When("rclone has secret + rcloneConfigSection but not DestPath", func() {
+				BeforeEach(func() {
+					rs.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
+					rs.Spec.Rclone.RcloneConfigSection = &configSection
+				})
+				It("Existing RcloneConfig + RcloneConfigSection", func() {
+					Expect(k8sClient.Get(ctx, nameFor(job), job)).NotTo(Succeed())
+				})
+			})
+			When("rclone has all fields filled", func() {
+				BeforeEach(func() {
+					rs.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
+					rs.Spec.Rclone.RcloneConfigSection = &configSection
+					rs.Spec.Rclone.RcloneDestPath = &destPath
+				})
+				It("should start", func() {
+					Eventually(func() error {
+						return k8sClient.Get(ctx, nameFor(job), job)
+					}, maxWait, interval).Should(Succeed())
+				})
 			})
 		})
 	})
+	// When("ReplicationSource should fail to start", func() {
+	// 	When("Schedule is an improper cron config", func() {
+	// 		var schedule string
+	// 		BeforeEach(func() {
+	// 			schedule = "#######"
+	// 			rs.Spec.Trigger = &scribev1alpha1.ReplicationSourceTriggerSpec{
+	// 				Schedule: &schedule,
+	// 			}
+	// 		})
+	// 		It("replicationsource cannot reconcile", func() {
 
-	When("rclone is given an incorrect config", func() {
-		var emptyString = ""
-		BeforeEach(func() {
-			rs.Spec.Rclone = &scribev1alpha1.ReplicationSourceRcloneSpec{
-				ReplicationSourceVolumeOptions: scribev1alpha1.ReplicationSourceVolumeOptions{
-					CopyMethod: scribev1alpha1.CopyMethodNone,
-				},
-				RcloneConfig:        &emptyString,
-				RcloneConfigSection: &emptyString,
-				RcloneDestPath:      &emptyString,
-			}
-		})
-		When("All fields are empty", func() {
-			It("should not start", func() {
-				Expect(k8sClient.Get(ctx, nameFor(job), job)).NotTo(Succeed())
-			})
-		})
-		When("rclone has secret but nothing else", func() {
-			BeforeEach(func() {
-				rs.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
-			})
-			It("does not start", func() {
-				Expect(k8sClient.Get(ctx, nameFor(job), job)).NotTo(Succeed())
-			})
-		})
-		When("rclone has secret + rcloneConfigSection but not DestPath", func() {
-			BeforeEach(func() {
-				rs.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
-				rs.Spec.Rclone.RcloneConfigSection = &configSection
-			})
-			It("Existing RcloneConfig + RcloneConfigSection", func() {
-				Expect(k8sClient.Get(ctx, nameFor(job), job)).NotTo(Succeed())
-			})
-		})
-		When("rclone has all fields filled", func() {
-			BeforeEach(func() {
-				rs.Spec.Rclone.RcloneConfig = &rcloneSecret.Name
-				rs.Spec.Rclone.RcloneConfigSection = &configSection
-				rs.Spec.Rclone.RcloneDestPath = &destPath
-			})
-			It("should start", func() {
-				Eventually(func() error {
-					return k8sClient.Get(ctx, nameFor(job), job)
-				}, maxWait, interval).Should(Succeed())
-			})
-		})
-	})
-
+	// 		})
+	// 	})
+	// })
 	//Context("When the rclone secret isn't specified", func() {
 	//	BeforeEach(func() {
 	//		var rcloneSecret = "foobar"
